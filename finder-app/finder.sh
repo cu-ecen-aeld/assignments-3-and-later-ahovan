@@ -23,7 +23,7 @@ if [ ! -d "$directory_to_search" ]; then
   exit_fail "$directory_to_search is not a directory"
 fi
 
-files="$(find "$directory_to_search" | wc -l)"
+files="$(find "$directory_to_search" -type f | wc -l)"
 lines="$(grep -r "$grep_mask" "$directory_to_search" | wc -l)"
 
 echo "The number of files are $files and the number of matching lines are $lines"
