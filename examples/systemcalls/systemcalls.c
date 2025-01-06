@@ -1,3 +1,8 @@
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+
 #include "systemcalls.h"
 
 /**
@@ -16,6 +21,24 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+    const int rc = system(cmd);
+    if (rc == -1) {
+        printf("system() cannot create a process for %s: %s", cmd, strerror(errno));
+        return false;
+    }
+
+    /* In essence, system() works as follows:
+     * 1. fork() in parent
+     * 2.       exec() in child
+     * 3. wait() in parent
+     * 4. return wait status
+     * So we can use W*() macros (see man 2 wait) to analyze the return code.  
+    */
+    const int child_rc = WEXITSTATUS(rc);
+    if (child_rc != 0) {
+        printf("system() command %s failed with exit code %d\n", cmd, child_rc);
+        return false;
+    }
 
     return true;
 }
