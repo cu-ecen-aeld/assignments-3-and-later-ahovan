@@ -121,6 +121,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     // and may be removed
     command[count] = command[count];
 
+    va_end(args);
 
     const pid_t pid = fork();
     switch (pid) {
@@ -129,23 +130,34 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         return false;
     }       
     case 0: { // Child process
-        const int fd_outputfile = open(outputfile, O_CREAT|O_WRONLY/*|O_TRUNC*/, 0600);
+        const int fd_outputfile = open(outputfile, O_CREAT|O_WRONLY|O_CLOEXEC, 0600);
         if (fd_outputfile == -1) {
             printf("Can't open file for redirected output: %s", strerror(errno));
             return false;
         }
+
+        const int rc = dup2(fd_outputfile, STDOUT_FILENO);
+        if (rc == -1) {
+            printf("Can't redirect output: %s", strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+
         if (execv(command[0], command) == -1) {
             printf("Can't exec command: %s", strerror(errno));
             exit(EXIT_FAILURE);
         } else {
-            close(fd_outputfile);
             exit(EXIT_SUCCESS);
         }
 
     }
     default: { // Parent process
         int child_status;
-        waitpid(pid, &child_status, 0);
+        const int rc = waitpid(pid, &child_status, 0);
+        if (rc == -1) {
+            printf("waitpid() failed: %s", strerror(errno));
+            return false;
+        }
+
         const int child_rc = WEXITSTATUS(child_status);
         if (child_rc != 0) {
             printf("Child process failed with exit code %d\n", child_rc);
@@ -154,7 +166,5 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     }
     }         
     
-    va_end(args);
-
     return true;
 }
