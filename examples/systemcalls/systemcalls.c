@@ -1,7 +1,9 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include "systemcalls.h"
 
@@ -14,13 +16,6 @@
 */
 bool do_system(const char *cmd)
 {
-
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
     const int rc = system(cmd);
     if (rc == -1) {
         printf("system() cannot create a process for %s: %s", cmd, strerror(errno));
@@ -28,9 +23,9 @@ bool do_system(const char *cmd)
     }
 
     /* In essence, system() works as follows:
-     * 1. fork() in parent
-     * 2.       exec() in child
-     * 3. wait() in parent
+     * 1. parent: fork()
+     * 2. child: exec()
+     * 3. parent: wait()
      * 4. return wait status
      * So we can use W*() macros (see man 2 wait) to analyze the return code.  
     */
@@ -72,17 +67,36 @@ bool do_exec(int count, ...)
     // and may be removed
     command[count] = command[count];
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
-
     va_end(args);
+
+    const pid_t pid = fork();
+    switch (pid) {
+        case -1: { // Error
+            printf("fork() failed: %s", strerror(errno));
+            return false;
+        }
+        case 0: { // Child process
+            if (execv(command[0], command) == -1) {
+                printf("Can't exec command: %s", strerror(errno));
+                exit(EXIT_FAILURE);
+            } else {
+                exit(EXIT_SUCCESS);
+            }
+        }
+        default: { // Parent process
+            int child_status;
+            const int rc = waitpid(pid, &child_status, 0);
+            if (rc == -1) {
+                printf("waitpid() failed: %s", strerror(errno));
+                return false;
+            }
+            const int child_rc = WEXITSTATUS(child_status);
+            if (child_rc != 0) {
+                printf("Child process failed with exit code %d\n", child_rc);
+                return false;
+            }
+        }
+    }
 
     return true;
 }
@@ -108,14 +122,38 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     command[count] = command[count];
 
 
-/*
- * TODO
- *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
- *   redirect standard out to a file specified by outputfile.
- *   The rest of the behaviour is same as do_exec()
- *
-*/
+    const pid_t pid = fork();
+    switch (pid) {
+    case -1: { // Error     
+        printf("fork() failed: %s", strerror(errno));
+        return false;
+    }       
+    case 0: { // Child process
+        const int fd_outputfile = open(outputfile, O_CREAT|O_WRONLY/*|O_TRUNC*/, 0600);
+        if (fd_outputfile == -1) {
+            printf("Can't open file for redirected output: %s", strerror(errno));
+            return false;
+        }
+        if (execv(command[0], command) == -1) {
+            printf("Can't exec command: %s", strerror(errno));
+            exit(EXIT_FAILURE);
+        } else {
+            close(fd_outputfile);
+            exit(EXIT_SUCCESS);
+        }
 
+    }
+    default: { // Parent process
+        int child_status;
+        waitpid(pid, &child_status, 0);
+        const int child_rc = WEXITSTATUS(child_status);
+        if (child_rc != 0) {
+            printf("Child process failed with exit code %d\n", child_rc);
+            return false;
+        }
+    }
+    }         
+    
     va_end(args);
 
     return true;
