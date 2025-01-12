@@ -5,4 +5,4 @@ writer: writer.c
 	$(CC) writer.c -o writer
 .PHONY: clean
 clean:
-	@rm writer
+	@rm -f writer
