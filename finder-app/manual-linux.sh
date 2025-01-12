@@ -94,6 +94,12 @@ cp libc.so.6 libm.so.6 libresolv.so.2 ${OUTDIR}/rootfs/lib64
 popd
 
 # TODO: Make device nodes
+# For some reason mknod dev/<device> does not work on my system, while cd dev && mknod <device> works.
+mkdir dev || (echo "Failed to create dev directory in rootfs" && exit 1)
+cd dev
+sudo mknod null -m 666 c 1 3
+sudo mknod console -m 666 c 5 1
+cd ..
 
 # TODO: Clean and build the writer utility
 
