@@ -109,7 +109,14 @@ make CROSS_COMPILE=$CROSS_COMPILE
 
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
+mkdir -p $OUTDIR/rootfs/home || (echo "Failed to create home directory in rootfs" && exit 1)
+cp -r writer finder.sh finder-test.sh autorun-qemu.sh conf/ $OUTDIR/rootfs/home
 
 # TODO: Chown the root directory
+sudo chown -R root:root "$OUTDIR/rootfs"
 
 # TODO: Create initramfs.cpio.gz
+cd "$OUTDIR/rootfs"
+find . | cpio -H newc -ov --owner root:root > ${OUTDIR}/initramfs.cpio
+cd ..
+gzip -f initramfs.cpio
