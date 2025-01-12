@@ -35,13 +35,13 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     git checkout ${KERNEL_VERSION}
 
     # TODO: Add your kernel build steps here
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- mrproper
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- defconfig
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}  mrproper
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}  defconfig
     # Please note that OpenSSL headers are required to compile the kernel.
     # Ubuntu: sudo apt install libssl-dev
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- -j8
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- -j8 modules
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- -j8 dtbs
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}  -j8
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}  -j8 modules
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}  -j8 dtbs
 
 fi
 
