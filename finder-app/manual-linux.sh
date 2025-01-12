@@ -35,6 +35,14 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     git checkout ${KERNEL_VERSION}
 
     # TODO: Add your kernel build steps here
+    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- mrproper
+    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- defconfig
+    # Please note that OpenSSL headers are required to compile the kernel.
+    # Ubuntu: sudo apt install libssl-dev
+    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- -j8
+    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- -j8 modules
+    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- -j8 dtbs
+
 fi
 
 echo "Adding the Image in outdir"
