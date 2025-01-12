@@ -81,6 +81,17 @@ ${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
+mkdir -p lib{,64} || (echo "Failed to create lib directories in rootfs" && exit 1)
+
+# gcc resides in bin/, so go 1 level up
+ARM_TOOLCHAIN_PATH=$(dirname $(which ${CROSS_COMPILE}gcc))/..
+TOOLCHAIN_LIBS="${ARM_TOOLCHAIN_PATH}/aarch64-none-linux-gnu/libc"
+
+pushd $TOOLCHAIN_LIBS
+cp lib/ld-linux-aarch64.so.1 ${OUTDIR}/rootfs/lib/
+cd lib64
+cp libc.so.6 libm.so.6 libresolv.so.2 ${OUTDIR}/rootfs/lib64
+popd
 
 # TODO: Make device nodes
 
