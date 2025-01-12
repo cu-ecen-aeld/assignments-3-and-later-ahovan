@@ -112,6 +112,11 @@ make CROSS_COMPILE=$CROSS_COMPILE
 mkdir -p $OUTDIR/rootfs/home || (echo "Failed to create home directory in rootfs" && exit 1)
 cp -r writer finder.sh finder-test.sh autorun-qemu.sh conf/ $OUTDIR/rootfs/home
 
+# Use correct path inside rootfs
+sed -i 's|\.\./conf/assignment|conf/assignment|g' $OUTDIR/rootfs/home/finder-test.sh
+# Use /bin/sh instead of /bin/bash which is absent in default busybox build
+sed -i 's|#!/bin/bash|#!/bin/sh|' $OUTDIR/rootfs/home/finder.sh
+
 # TODO: Chown the root directory
 sudo chown -R root:root "$OUTDIR/rootfs"
 
