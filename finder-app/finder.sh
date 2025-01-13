@@ -1,4 +1,4 @@
-#!/bin/bash 
+#!/bin/sh 
 
 # set -ex for shell debugging
 set -e

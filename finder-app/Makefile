@@ -6,3 +6,4 @@ writer: writer.c
 .PHONY: clean
 clean:
 	@rm -f writer
+all:	writer
