@@ -11,7 +11,7 @@ all:	aesdsocket
 .PHONY: clean
 
 clean:
-	@rm -f aesdsocket
+	@rm -f aesdsocket *.o
 
 run:	all
 	./aesdsocket
