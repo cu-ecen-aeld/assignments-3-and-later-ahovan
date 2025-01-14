@@ -27,6 +27,42 @@ void exit_fail(const char * const msg) {
     exit(-1);
 }
 
+void wait_and_read_client(const int server_socket)
+{
+    syslog(LOG_INFO, "Waiting for client connection on %s:%d\n", SERVER_ADDR, SERVER_PORT);
+
+    bool do_continue = true;
+    while (do_continue) {
+        struct sockaddr_in client_addr;
+        socklen_t client_addr_len = sizeof(client_addr);
+        const int client_socket = accept(server_socket, (struct sockaddr * ) &client_addr, &client_addr_len);
+        if (client_socket < 0) {
+            exit_fail("Failed to accept client connection");
+        }
+
+        char client_ip[INET_ADDRSTRLEN];
+        if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN) == NULL) {
+            exit_fail("Failed to convert client IP address to string");
+        }
+
+        syslog(LOG_INFO, "Accepted client connection from %s:%d\n", client_ip, client_addr.sin_port);
+        char buffer[BUFFER_SIZE];
+        const ssize_t read_bytes = recv(client_socket, buffer, sizeof(buffer), 0);
+        if (read_bytes < 0) {
+            exit_fail("Failed to read from client socket");
+        } else if (read_bytes == 0) {
+            // end of transmission
+        } else {
+            buffer[read_bytes] = '\0';
+            syslog(LOG_INFO, "Received %zu bytes: \n%s\n", read_bytes, buffer);
+            //TODO: find \n in buffer, if found, write/flush to file
+        }
+
+        close(client_socket);
+        return;
+    }
+
+}
 
 int main(int argc, char ** argv)
 {
@@ -58,35 +94,10 @@ int main(int argc, char ** argv)
         exit_fail("Failed to listen on server socket");
     }
 
-    bool do_continue = true;
-    while (do_continue) {
-        struct sockaddr_in client_addr;
-        socklen_t client_addr_len = sizeof(client_addr);
-        const int client_socket = accept(server_socket, (struct sockaddr * ) &client_addr, &client_addr_len);
-        if (client_socket < 0) {
-            exit_fail("Failed to accept client connection");
-        }
+    wait_and_read_client(server_socket);
 
-        char client_ip[INET_ADDRSTRLEN];
-        if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN) == NULL) {
-            exit_fail("Failed to convert client IP address to string");
-        }
 
-        syslog(LOG_INFO, "Accepted client connection from %s:%d\n", client_ip, client_addr.sin_port);
-        char buffer[BUFFER_SIZE];
-        const ssize_t read_bytes = recv(client_socket, buffer, sizeof(buffer), 0);
-        if (read_bytes < 0) {
-            perror("Failed to read from client socket");
-            // cleanup/exit/next iteration???
-        } else if (read_bytes == 0) {
-            // end of transmission
-        } else {
-            buffer[read_bytes] = '\0';
-            syslog(LOG_INFO, "Received %zu bytes: \n%s\n", read_bytes, buffer);
-        }
-
-        close(client_socket);
-    }
+    close(server_socket);
 
     return 0;
 }
