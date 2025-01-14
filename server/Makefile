@@ -12,3 +12,6 @@ all:	aesdsocket
 
 clean:
 	@rm -f aesdsocket
+
+run:	all
+	./aesdsocket
