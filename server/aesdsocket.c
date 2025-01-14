@@ -60,12 +60,19 @@ int main(int argc, char ** argv)
 
     bool do_continue = true;
     while (do_continue) {
-        // TODO: add client_addr and log it
-        const int client_socket = accept(server_socket, NULL, NULL);
+        struct sockaddr_in client_addr;
+        socklen_t client_addr_len = sizeof(client_addr);
+        const int client_socket = accept(server_socket, (struct sockaddr * ) &client_addr, &client_addr_len);
         if (client_socket < 0) {
             exit_fail("Failed to accept client connection");
         }
 
+        char client_ip[INET_ADDRSTRLEN];
+        if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN) == NULL) {
+            exit_fail("Failed to convert client IP address to string");
+        }
+
+        syslog(LOG_INFO, "Accepted client connection from %s:%d\n", client_ip, client_addr.sin_port);
         char buffer[BUFFER_SIZE];
         const ssize_t read_bytes = recv(client_socket, buffer, sizeof(buffer), 0);
         if (read_bytes < 0) {
@@ -75,7 +82,7 @@ int main(int argc, char ** argv)
             // end of transmission
         } else {
             buffer[read_bytes] = '\0';
-            syslog(LOG_INFO, "Received %zu bytes: %s\n", read_bytes, buffer);
+            syslog(LOG_INFO, "Received %zu bytes: \n%s\n", read_bytes, buffer);
         }
 
         close(client_socket);
