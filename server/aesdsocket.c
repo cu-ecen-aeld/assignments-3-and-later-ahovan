@@ -8,6 +8,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+static const char * const SERVER_ADDR = "127.0.0.1";
+static const int SERVER_PORT = 9000;
+static const int BACKLOG = 10;
+static const ssize_t BUFFER_SIZE = 1024;
 
 void exit_fail(const char * const msg) {
     const char * const err_msg = strerror(errno);
@@ -42,15 +46,15 @@ int main(int argc, char ** argv)
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    addr.sin_port = htons(9000);
+    addr.sin_addr.s_addr = inet_addr(SERVER_ADDR);
+    addr.sin_port = htons(SERVER_PORT);
     addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(server_socket, (struct sockaddr *) &addr, sizeof(addr)) != 0) {
         exit_fail("Failed to bind server socket");
     }
 
-    if (listen(server_socket, 10) != 0) {
+    if (listen(server_socket, BACKLOG) != 0) {
         exit_fail("Failed to listen on server socket");
     }
 
@@ -62,7 +66,7 @@ int main(int argc, char ** argv)
             exit_fail("Failed to accept client connection");
         }
 
-        char buffer[1024];
+        char buffer[BUFFER_SIZE];
         const ssize_t read_bytes = recv(client_socket, buffer, sizeof(buffer), 0);
         if (read_bytes < 0) {
             perror("Failed to read from client socket");
