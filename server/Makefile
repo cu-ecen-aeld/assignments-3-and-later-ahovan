@@ -15,3 +15,6 @@ clean:
 
 run:	all
 	./aesdsocket
+
+daemon:	all
+	./aesdsocket -d

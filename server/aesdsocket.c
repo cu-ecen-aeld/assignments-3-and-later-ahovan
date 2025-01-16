@@ -184,6 +184,30 @@ void init_server(void)
     }
 }
 
+void start_daemon(void)
+{
+    const pid_t pid = fork();
+    if (pid == -1) {
+        exit_fail("Failed to fork");
+    }
+
+    if (pid != 0) { // parent process
+        exit(0);
+    }
+
+    if (setsid() == -1) {
+        exit_fail("Failed to set process group ID");
+    }
+
+    if (chdir("/") == -1) {
+        exit_fail("Failed to set working directory for daemon");
+    }
+
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+}
+
 int main(int argc, char ** argv)
 {
     const bool daemon = (argc > 1 && strcmp(argv[1], "-d") == 0);
@@ -207,6 +231,10 @@ int main(int argc, char ** argv)
     }
 
     init_server();
+
+    if (daemon) {
+        start_daemon();
+    }
 
     do_server_loop();
 
