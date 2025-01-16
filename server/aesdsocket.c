@@ -16,6 +16,28 @@ static const int BACKLOG = 10;
 static const ssize_t READ_CHUNK_SIZE = 1024;
 static const char * const DUMP_DATA_FILE = "/var/tmp/aesdsocketdata";
 
+// very bad idea to keep such things in global variables, but we need to close them in signal handler 
+static int server_socket = -1;
+static int client_socket = -1;
+static int dump_fd = -1;
+
+
+void cleanup(void)
+{
+    if (server_socket != -1) {
+        close(server_socket);
+    }
+    if (client_socket != -1) {
+        close(server_socket);
+    }
+
+    if (dump_fd != -1) {
+        close(dump_fd);
+    }
+
+    closelog();
+}
+
 void exit_fail(const char * const msg) {
     const char * const err_msg = strerror(errno);
 
@@ -26,8 +48,16 @@ void exit_fail(const char * const msg) {
     syslog(LOG_ERR, "%s", buf);
 
     free(buf);
-    closelog();
+
+    cleanup();
+
     exit(-1);
+}
+
+void signal_handler(const int signum)
+{
+    syslog(LOG_INFO, "Caught signal %d, freeing up resources and exiting\n", signum);
+    cleanup();
 }
 
 void log_received_chunk(const char * const start, const ssize_t size)
@@ -45,13 +75,12 @@ void log_received_chunk(const char * const start, const ssize_t size)
     free(log_string);
 }
 
-void process_client_connection(const int client_socket, const int dump_fd)
+void process_client_connection(void)
 {
     char * buffer = NULL;
     ssize_t buffer_size = 0;
-    bool do_continue = true;
 
-    while (do_continue) {
+    while (true) {
         buffer = realloc(buffer, buffer_size + READ_CHUNK_SIZE);
         if (buffer == NULL) {
             exit_fail("Failed to (re)allocate memory for read buffer");
@@ -62,7 +91,7 @@ void process_client_connection(const int client_socket, const int dump_fd)
         if (read_bytes < 0) {
             exit_fail("Failed to read from client socket");
         } else if (read_bytes == 0) { // end of transmission from client side
-            do_continue = false;
+            break;
         } else {
             const char * const new_portion = buffer + buffer_size;
             buffer_size += read_bytes;
@@ -70,12 +99,13 @@ void process_client_connection(const int client_socket, const int dump_fd)
             log_received_chunk(new_portion, read_bytes);
 
             if (buffer[buffer_size - 1] == '\n') {
-                do_continue = false;
+                break;
             }
         }
     }
 
     off_t file_size = lseek(dump_fd, 0, SEEK_END);
+
     const ssize_t written_bytes = write(dump_fd, buffer, buffer_size);
     if (written_bytes != buffer_size) {
         exit_fail("Failed to write to dump data file");
@@ -85,7 +115,7 @@ void process_client_connection(const int client_socket, const int dump_fd)
 
     file_size += buffer_size;
 
-    syslog(LOG_INFO, "About to send %zu bytes back to client\n", file_size);
+    syslog(LOG_INFO, "Sending %zu bytes back to client\n", file_size);
 
     if (lseek(dump_fd, 0, SEEK_SET) < 0) {
         exit_fail("Failed to rewind to begin of dump data file");
@@ -100,14 +130,14 @@ void process_client_connection(const int client_socket, const int dump_fd)
     }
 }
 
-void do_server_loop(const int server_socket, const int dump_fd)
+void do_server_loop(void)
 {
     syslog(LOG_INFO, "Waiting for client connection on %s:%d\n", SERVER_ADDR, SERVER_PORT);
 
     while (true) {
         struct sockaddr_in client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
-        const int client_socket = accept(server_socket, (struct sockaddr * ) &client_addr, &client_addr_len);
+        client_socket = accept(server_socket, (struct sockaddr * ) &client_addr, &client_addr_len);
         if (client_socket < 0) {
             exit_fail("Failed to accept client connection");
         }
@@ -119,18 +149,19 @@ void do_server_loop(const int server_socket, const int dump_fd)
 
         syslog(LOG_INFO, "Accepted client connection from %s:%d\n", client_ip, client_addr.sin_port);
 
-        process_client_connection(client_socket, dump_fd);
+        process_client_connection();
 
         if (close(client_socket) == -1) {
             exit_fail("Failed to close client socket");
         }
+        client_socket = -1;
         syslog(LOG_INFO, "Close connection from %s:%d\n", client_ip, client_addr.sin_port);
     }
 }
 
-const int init_server()
+void init_server(void)
 {
-    const int server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket < 0) {
         exit_fail("Failed to create socket");
     }
@@ -150,8 +181,6 @@ const int init_server()
     if (listen(server_socket, BACKLOG) != 0) {
         exit_fail("Failed to listen on server socket");
     }
-
-    return server_socket;
 }
 
 int main(int argc, char ** argv)
@@ -163,22 +192,17 @@ int main(int argc, char ** argv)
 
     openlog("aesdsocket", LOG_PID | LOG_CONS | duplicate_to_stderr, LOG_USER);
 
-    const int dump_fd = open(DUMP_DATA_FILE, O_RDWR | O_TRUNC | O_CREAT, 0644);
+    dump_fd = open(DUMP_DATA_FILE, O_RDWR | O_TRUNC | O_CREAT, 0644);
     if (dump_fd < 0) {
         exit_fail("Failed to open dump data file");
     }
 
-    const int server_socket = init_server();
+    init_server();
 
-    do_server_loop(server_socket, dump_fd);
+    do_server_loop();
 
-    if (close(server_socket) == -1) {
-        exit_fail("Failed to close server socket");
-    }
-
-    if (close(server_socket) == -1) {
-        exit_fail("Failed to close dump data file");
-    }
+    // actually will never get here, but just for sake of completeness
+    cleanup();
 
     return 0;
 }
