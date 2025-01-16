@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -48,7 +49,6 @@ void process_client_connection(const int client_socket, const int dump_fd)
 {
     char * buffer = NULL;
     ssize_t buffer_size = 0;
-    ssize_t prev_dump_position = 0;
     bool do_continue = true;
 
     while (do_continue) {
@@ -69,23 +69,35 @@ void process_client_connection(const int client_socket, const int dump_fd)
 
             log_received_chunk(new_portion, read_bytes);
 
-            if (buffer[buffer_size - 1] == '\n') { // it is time to dump a portion to file
-                const ssize_t bytes_to_write = buffer_size - prev_dump_position;
-                const ssize_t written_bytes = write(dump_fd, buffer + prev_dump_position, bytes_to_write);
-                if (written_bytes != bytes_to_write) {
-                    //printf("written_bytes: %ld, read_bytes: %ld\n", written_bytes, read_bytes);
-                    exit_fail("Failed to write to dump data file");
-                }
-
-                sync();
-
-                prev_dump_position += read_bytes;
+            if (buffer[buffer_size - 1] == '\n') {
+                do_continue = false;
             }
         }
     }
 
-    // TODO: sent buffer back to client, free memory
+    off_t file_size = lseek(dump_fd, 0, SEEK_END);
+    const ssize_t written_bytes = write(dump_fd, buffer, buffer_size);
+    if (written_bytes != buffer_size) {
+        exit_fail("Failed to write to dump data file");
+    }
+
+    sync();
+
+    file_size += buffer_size;
+
+    syslog(LOG_INFO, "About to send %zu bytes back to client\n", file_size);
+
+    if (lseek(dump_fd, 0, SEEK_SET) < 0) {
+        exit_fail("Failed to rewind to begin of dump data file");
+    }
+
+    const ssize_t sent_bytes = sendfile(client_socket, dump_fd, NULL, file_size);
+
     free(buffer);
+
+    if (sent_bytes != file_size) {
+        exit_fail("Failed to send data back to client");
+    }
 }
 
 void do_server_loop(const int server_socket, const int dump_fd)
