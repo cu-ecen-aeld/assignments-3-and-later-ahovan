@@ -167,6 +167,11 @@ void init_server(void)
         exit_fail("Failed to create socket");
     }
 
+    const int reuse = 1;
+    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        exit_fail("Failed to set SO_REUSEADDR for server socket");
+    }
+
     // TODO: give a try to getaddrinfo() instead old-school way
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
