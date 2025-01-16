@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -191,6 +192,14 @@ int main(int argc, char ** argv)
     const int duplicate_to_stderr = daemon ? 0 : LOG_PERROR;
 
     openlog("aesdsocket", LOG_PID | LOG_CONS | duplicate_to_stderr, LOG_USER);
+
+    if (signal(SIGINT, signal_handler) == SIG_ERR) {
+        exit_fail("Failed to install SIGINT handler");
+    }
+
+    if (signal(SIGTERM, signal_handler) == SIG_ERR) {
+        exit_fail("Failed to install SIGTERM handler");
+    }
 
     dump_fd = open(DUMP_DATA_FILE, O_RDWR | O_TRUNC | O_CREAT, 0644);
     if (dump_fd < 0) {
