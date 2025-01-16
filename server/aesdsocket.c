@@ -70,9 +70,10 @@ void process_client_connection(const int client_socket, const int dump_fd)
             log_received_chunk(new_portion, read_bytes);
 
             if (buffer[buffer_size - 1] == '\n') { // it is time to dump a portion to file
-
-                const ssize_t written_bytes = write(dump_fd, buffer + prev_dump_position, buffer_size - prev_dump_position);
-                if (written_bytes != read_bytes) {
+                const ssize_t bytes_to_write = buffer_size - prev_dump_position;
+                const ssize_t written_bytes = write(dump_fd, buffer + prev_dump_position, bytes_to_write);
+                if (written_bytes != bytes_to_write) {
+                    //printf("written_bytes: %ld, read_bytes: %ld\n", written_bytes, read_bytes);
                     exit_fail("Failed to write to dump data file");
                 }
 
@@ -81,13 +82,10 @@ void process_client_connection(const int client_socket, const int dump_fd)
                 prev_dump_position += read_bytes;
             }
         }
-
-        // TODO: sent buffer back to client, free memory
-
-        free(buffer);
     }
 
-    //
+    // TODO: sent buffer back to client, free memory
+    free(buffer);
 }
 
 void do_server_loop(const int server_socket, const int dump_fd)
