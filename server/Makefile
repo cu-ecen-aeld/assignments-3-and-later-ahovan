@@ -18,3 +18,8 @@ run:	all
 
 daemon:	all
 	./aesdsocket -d
+
+memcheck: all
+	valgrind  --error-exitcode=1 --leak-check=full --show-leak-kinds=all \
+	--track-origins=yes --errors-for-leak-kinds=definite --verbose \
+	--log-file=valgrind-aesdsocket.txt ./aesdsocket
