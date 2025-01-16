@@ -11,7 +11,7 @@ all:	aesdsocket
 .PHONY: clean
 
 clean:
-	@rm -f aesdsocket *.o
+	@rm -f aesdsocket *.o valgrind-*.txt
 
 run:	all
 	./aesdsocket
