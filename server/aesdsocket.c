@@ -21,7 +21,6 @@ static const int TIME_LOGGING_PERIOD_SEC = 10;
 
 // very bad idea to keep such things in global variables, but we need to close them in signal handler 
 static int server_socket = -1;
-static int client_socket = -1;
 static int dump_fd = -1;
 pthread_mutex_t dump_file_mutex;
 
@@ -31,9 +30,6 @@ static pthread_t time_logging_thread = -1;
 void cleanup(void)
 {
     if (server_socket != -1) {
-        close(server_socket);
-    }
-    if (client_socket != -1) {
         close(server_socket);
     }
 
@@ -85,10 +81,11 @@ void log_received_chunk(const char * const start, const ssize_t size)
     free(log_string);
 }
 
-void process_client_connection(void)
+void * process_client_connection(void * arg)
 {
     char * buffer = NULL;
     ssize_t buffer_size = 0;
+    const int client_socket = (int)(long) arg;
 
     while (true) {
         buffer = realloc(buffer, buffer_size + READ_CHUNK_SIZE);
@@ -142,6 +139,14 @@ void process_client_connection(void)
     if (sent_bytes != file_size) {
         exit_fail("Failed to send data back to client");
     }
+
+    if (close(client_socket) == -1) {
+        exit_fail("Failed to close client socket");
+    }
+
+    syslog(LOG_INFO, "Close connection at socket %d\n", client_socket);
+
+    return NULL;
 }
 
 void do_server_loop(void)
@@ -151,7 +156,7 @@ void do_server_loop(void)
     while (true) {
         struct sockaddr_in client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
-        client_socket = accept(server_socket, (struct sockaddr * ) &client_addr, &client_addr_len);
+        const int client_socket = accept(server_socket, (struct sockaddr * ) &client_addr, &client_addr_len);
         if (client_socket < 0) {
             exit_fail("Failed to accept client connection");
         }
@@ -161,15 +166,18 @@ void do_server_loop(void)
             exit_fail("Failed to convert client IP address to string");
         }
 
-        syslog(LOG_INFO, "Accepted client connection from %s:%d\n", client_ip, client_addr.sin_port);
+        syslog(LOG_INFO, "Accepted client connection at socket %d from %s:%d\n", client_socket, client_ip, client_addr.sin_port);
 
-        process_client_connection();
-
-        if (close(client_socket) == -1) {
-            exit_fail("Failed to close client socket");
+        pthread_t client_thread;
+        // From my (C++ developer, not C) point ov view, this casting (int -> long, then long -> void *) 
+        // looks - and probably is - dirty, tricky, hacky, and not 100%-portable, but safe for x86_64 and aarch64.
+        // The same goes for vice-versa conversion in process_client_connection().
+        if (pthread_create(&client_thread, NULL, process_client_connection, (void *)(long)client_socket) != 0) {
+            exit_fail("Failed to create a thread to process connection");
         }
-        client_socket = -1;
-        syslog(LOG_INFO, "Close connection from %s:%d\n", client_ip, client_addr.sin_port);
+
+        // add thread to list of threads
+        // ???? pthread_join(client_thread, NULL);
     }
 }
 
