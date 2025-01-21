@@ -44,7 +44,7 @@ void cleanup(void)
     closelog();
 }
 
-void exit_fail(const char * const msg) {
+void log_fault(const char * const msg) {
     const char * const err_msg = strerror(errno);
 
     char * const buf = malloc(strlen(msg) + strlen(err_msg) + 20);
@@ -54,9 +54,16 @@ void exit_fail(const char * const msg) {
     syslog(LOG_ERR, "%s", buf);
 
     free(buf);
+}
 
+void thread_fail(const char * const msg) {
+    log_fault(msg);
+    pthread_exit((void *)(long)-1);
+}
+
+void exit_fail(const char * const msg) {
+    log_fault(msg);
     cleanup();
-
     exit(-1);
 }
 
@@ -70,7 +77,9 @@ void log_received_chunk(const char * const start, const ssize_t size)
 {
     char * const log_string = malloc(size + 1 /* \0 */);
     if (log_string == NULL) {
-        exit_fail("Failed to allocate memory for log string");
+        // This is a helper called from process_client_connection(),
+        // so error here must terminate the thread, not the entire process
+        thread_fail("Failed to allocate memory for log string");
     }
 
     strncpy(log_string, start, size);
@@ -90,13 +99,13 @@ void * process_client_connection(void * arg)
     while (true) {
         buffer = realloc(buffer, buffer_size + READ_CHUNK_SIZE);
         if (buffer == NULL) {
-            exit_fail("Failed to (re)allocate memory for read buffer");
+            thread_fail("Failed to (re)allocate memory for read buffer");
         }
 
         const ssize_t read_bytes = recv(client_socket, buffer + buffer_size, READ_CHUNK_SIZE, 0);
 
         if (read_bytes < 0) {
-            exit_fail("Failed to read from client socket");
+            thread_fail("Failed to read from client socket");
         } else if (read_bytes == 0) { // end of transmission from client side
             break;
         } else {
@@ -118,7 +127,7 @@ void * process_client_connection(void * arg)
     pthread_mutex_unlock(&dump_file_mutex);
     
     if (written_bytes != buffer_size) {
-        exit_fail("Failed to write to dump data file");
+        thread_fail("Failed to write to dump data file");
     }
 
     sync();
@@ -128,7 +137,7 @@ void * process_client_connection(void * arg)
     syslog(LOG_INFO, "Sending %zu bytes back to client\n", file_size);
 
     if (lseek(dump_fd, 0, SEEK_SET) < 0) {
-        exit_fail("Failed to rewind to begin of dump data file");
+        thread_fail("Failed to rewind to begin of dump data file");
     }
 
     // at this point we are not aware of file changes from other threads
@@ -137,11 +146,11 @@ void * process_client_connection(void * arg)
     free(buffer);
 
     if (sent_bytes != file_size) {
-        exit_fail("Failed to send data back to client");
+        thread_fail("Failed to send data back to client");
     }
 
     if (close(client_socket) == -1) {
-        exit_fail("Failed to close client socket");
+        thread_fail("Failed to close client socket");
     }
 
     syslog(LOG_INFO, "Close connection at socket %d\n", client_socket);
@@ -236,6 +245,9 @@ void start_daemon(void)
 
 void * do_time_logging(void *)
 {
+    // This is a special function running in separate thread, so if error occurs, we must exit the process,
+    // no just the thread as we do for threads handling client connections.
+    // That's why we use exit_fail() instead of thread_fail().
     while (true) {
         const time_t now = time(NULL);
         const struct tm * const now_tm = localtime(&now);
