@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -16,12 +17,16 @@ static const int SERVER_PORT = 9000;
 static const int BACKLOG = 10;
 static const ssize_t READ_CHUNK_SIZE = 1024;
 static const char * const DUMP_DATA_FILE = "/var/tmp/aesdsocketdata";
+static const int TIME_LOGGING_PERIOD_SEC = 10;
 
 // very bad idea to keep such things in global variables, but we need to close them in signal handler 
 static int server_socket = -1;
 static int client_socket = -1;
 static int dump_fd = -1;
+pthread_mutex_t dump_file_mutex;
 
+//TODO: put time_logging_thread to list of threads instead
+static pthread_t time_logging_thread = -1;
 
 void cleanup(void)
 {
@@ -35,6 +40,10 @@ void cleanup(void)
     if (dump_fd != -1) {
         close(dump_fd);
     }
+
+    // ??? at which point of cleanup() should I wait for threads to finish and destroy mutex?
+    // ??? how to check that mutex was initialized?
+    pthread_mutex_destroy(&dump_file_mutex);
 
     closelog();
 }
@@ -105,9 +114,12 @@ void process_client_connection(void)
         }
     }
 
+    // prevent changes in file between lseek() and write() that may come from other threads 
+    pthread_mutex_lock(&dump_file_mutex);
     off_t file_size = lseek(dump_fd, 0, SEEK_END);
-
     const ssize_t written_bytes = write(dump_fd, buffer, buffer_size);
+    pthread_mutex_unlock(&dump_file_mutex);
+    
     if (written_bytes != buffer_size) {
         exit_fail("Failed to write to dump data file");
     }
@@ -122,6 +134,7 @@ void process_client_connection(void)
         exit_fail("Failed to rewind to begin of dump data file");
     }
 
+    // at this point we are not aware of file changes from other threads
     const ssize_t sent_bytes = sendfile(client_socket, dump_fd, NULL, file_size);
 
     free(buffer);
@@ -213,6 +226,46 @@ void start_daemon(void)
     close(STDERR_FILENO);
 }
 
+void * do_time_logging(void *)
+{
+    while (true) {
+        const time_t now = time(NULL);
+        const struct tm * const now_tm = localtime(&now);
+        if (now_tm == NULL) {
+            exit_fail("Failed to get current time");
+        }
+
+        char buffer[64];
+        const ssize_t buffer_size = strftime(buffer, sizeof(buffer), "timestamp:%a, %d %b %Y %H:%M:%S %z\n", now_tm);
+        if (buffer_size < 0) {
+            exit_fail("Failed to format current time");
+        }
+
+        syslog(LOG_INFO, "Logging time %s\n", buffer);
+
+        pthread_mutex_lock(&dump_file_mutex);
+        const ssize_t written_bytes = write(dump_fd, buffer, buffer_size);
+        pthread_mutex_unlock(&dump_file_mutex);
+
+        if (written_bytes != buffer_size) {
+            exit_fail("Failed to write timestamp to dump data file");
+        }
+
+        // This approach is described in R. Love's Linux System Programming book.
+        // Page 383 contains rationale for using nanosleep() vs other methods.
+        struct timespec req = { .tv_sec = TIME_LOGGING_PERIOD_SEC, .tv_nsec = 0 };
+        struct timespec rem, * a = &req, * b = &rem;
+        while (nanosleep (a, b) && errno == EINTR) {
+            struct timespec * tmp = a;
+            a = b;
+            b = tmp;
+        }
+    }
+
+    return NULL;
+}
+
+
 int main(int argc, char ** argv)
 {
     const bool daemon = (argc > 1 && strcmp(argv[1], "-d") == 0);
@@ -237,8 +290,16 @@ int main(int argc, char ** argv)
 
     init_server();
 
+    if (pthread_mutex_init(&dump_file_mutex, NULL) != 0) {
+        exit_fail("Failed to initialize mutex for dump file");
+    }
+
     if (daemon) {
         start_daemon();
+    }
+
+    if (pthread_create(&time_logging_thread, NULL, do_time_logging, NULL) != 0) {
+        exit_fail("Failed to create time logging thread");
     }
 
     do_server_loop();
