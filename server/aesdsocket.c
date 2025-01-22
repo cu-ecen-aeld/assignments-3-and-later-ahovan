@@ -21,11 +21,10 @@ static const char * const DUMP_DATA_FILE = "/var/tmp/aesdsocketdata";
 static const int TIME_LOGGING_PERIOD_SEC = 10;
 
 // very bad idea to keep such things in global variables, but we need to close them in signal handler 
+static bool do_run = true;
 static int server_socket = -1;
 static int dump_fd = -1;
-pthread_mutex_t dump_file_mutex;
-
-static pthread_t time_logging_thread = -1;
+static pthread_mutex_t dump_file_mutex;
 
 struct threads_list_node {
 	pthread_t thread;
@@ -36,6 +35,8 @@ TAILQ_HEAD(, threads_list_node) threads_list;
 
 void cleanup(void)
 {
+    do_run = false;
+
     if (server_socket != -1) {
         close(server_socket);
     }
@@ -43,9 +44,6 @@ void cleanup(void)
     if (dump_fd != -1) {
         close(dump_fd);
     }
-
-    // time logging thread never exits on its own (unless error occured). Thus, we need to stop it manually.
-    pthread_cancel(time_logging_thread);
 
 	while (!TAILQ_EMPTY(&threads_list)) {
         struct threads_list_node * node = TAILQ_FIRST(&threads_list);
@@ -184,7 +182,7 @@ void do_server_loop(void)
 {
     syslog(LOG_INFO, "Waiting for client connection on %s:%d\n", SERVER_ADDR, SERVER_PORT);
 
-    while (true) {
+    while (do_run) {
         struct sockaddr_in client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
         const int client_socket = accept(server_socket, (struct sockaddr * ) &client_addr, &client_addr_len);
@@ -275,7 +273,7 @@ void * do_time_logging(void *)
     // This is a special function running in separate thread, so if error occurs, we must exit the process,
     // no just the thread as we do for threads handling client connections.
     // That's why we use exit_fail() instead of thread_fail().
-    while (true) {
+    while (do_run) {
         const time_t now = time(NULL);
         const struct tm * const now_tm = localtime(&now);
         if (now_tm == NULL) {
@@ -357,7 +355,6 @@ int main(int argc, char ** argv)
         exit_fail("Failed to create time logging thread");
     }
     TAILQ_INSERT_TAIL(&threads_list, node, nodes);
-    time_logging_thread = node->thread;
 
     do_server_loop();
 
