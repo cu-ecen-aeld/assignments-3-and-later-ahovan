@@ -45,7 +45,7 @@ void cleanup(void)
         close(dump_fd);
     }
 
-	while (!TAILQ_EMPTY(&threads_list)) {
+    while (!TAILQ_EMPTY(&threads_list)) {
         struct threads_list_node * node = TAILQ_FIRST(&threads_list);
         if (node == NULL) { // this should never happen, but I'm paranoid about checking pointers before dereferencing
             syslog(LOG_ERR, "Internal error: NULL pointer in threads list\n");
@@ -209,9 +209,6 @@ void do_server_loop(void)
             exit_fail("Failed to create a thread to process connection");
         }
         TAILQ_INSERT_TAIL(&threads_list, node, nodes);
-
-        // add thread to list of threads
-        // ???? pthread_join(client_thread, NULL);
     }
 }
 
@@ -271,7 +268,7 @@ void start_daemon(void)
 void * do_time_logging(void *)
 {
     // This is a special function running in separate thread, so if error occurs, we must exit the process,
-    // no just the thread as we do for threads handling client connections.
+    // not just the thread as we do for threads handling client connections.
     // That's why we use exit_fail() instead of thread_fail().
     while (do_run) {
         const time_t now = time(NULL);
