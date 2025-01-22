@@ -10,6 +10,7 @@
 #include <syslog.h>
 #include <sys/sendfile.h>
 #include <sys/socket.h>
+#include <sys/queue.h>
 #include <unistd.h>
 
 static const char * const SERVER_ADDR = "127.0.0.1";
@@ -24,8 +25,14 @@ static int server_socket = -1;
 static int dump_fd = -1;
 pthread_mutex_t dump_file_mutex;
 
-//TODO: put time_logging_thread to list of threads instead
 static pthread_t time_logging_thread = -1;
+
+struct threads_list_node {
+	pthread_t thread;
+	TAILQ_ENTRY(threads_list_node) nodes;
+};
+
+TAILQ_HEAD(, threads_list_node) threads_list;
 
 void cleanup(void)
 {
@@ -37,7 +44,21 @@ void cleanup(void)
         close(dump_fd);
     }
 
-    // ??? at which point of cleanup() should I wait for threads to finish and destroy mutex?
+    // time logging thread never exits on its own (unless error occured). Thus, we need to stop it manually.
+    pthread_cancel(time_logging_thread);
+
+	while (!TAILQ_EMPTY(&threads_list)) {
+        struct threads_list_node * node = TAILQ_FIRST(&threads_list);
+        if (node == NULL) { // this should never happen, but I'm paranoid about checking pointers before dereferencing
+            syslog(LOG_ERR, "Internal error: NULL pointer in threads list\n");
+            exit(-1);
+        }
+
+        TAILQ_REMOVE(&threads_list, node, nodes);
+        pthread_join(node->thread, NULL);
+        free(node);
+    }
+
     // ??? how to check that mutex was initialized?
     pthread_mutex_destroy(&dump_file_mutex);
 
@@ -156,6 +177,7 @@ void * process_client_connection(void * arg)
     syslog(LOG_INFO, "Close connection at socket %d\n", client_socket);
 
     return NULL;
+    // after return from this function thread is in a joinable state
 }
 
 void do_server_loop(void)
@@ -177,13 +199,18 @@ void do_server_loop(void)
 
         syslog(LOG_INFO, "Accepted client connection at socket %d from %s:%d\n", client_socket, client_ip, client_addr.sin_port);
 
-        pthread_t client_thread;
+        struct threads_list_node * const node = malloc(sizeof(struct threads_list_node));
+        if (node == NULL) {
+            exit_fail("Failed to allocate memory for client thread node");
+        }
+
         // From my (C++ developer, not C) point ov view, this casting (int -> long, then long -> void *) 
         // looks - and probably is - dirty, tricky, hacky, and not 100%-portable, but safe for x86_64 and aarch64.
         // The same goes for vice-versa conversion in process_client_connection().
-        if (pthread_create(&client_thread, NULL, process_client_connection, (void *)(long)client_socket) != 0) {
+        if (pthread_create(&node->thread, NULL, process_client_connection, (void *)(long)client_socket) != 0) {
             exit_fail("Failed to create a thread to process connection");
         }
+        TAILQ_INSERT_TAIL(&threads_list, node, nodes);
 
         // add thread to list of threads
         // ???? pthread_join(client_thread, NULL);
@@ -318,9 +345,19 @@ int main(int argc, char ** argv)
         start_daemon();
     }
 
-    if (pthread_create(&time_logging_thread, NULL, do_time_logging, NULL) != 0) {
+    // Init threads queue
+	TAILQ_INIT(&threads_list);
+
+	struct threads_list_node * const node = malloc(sizeof(struct threads_list_node));
+	if (node == NULL) {
+        exit_fail("Failed to allocate memory for timer thread node");
+	}
+
+    if (pthread_create(&node->thread, NULL, do_time_logging, NULL) != 0) {
         exit_fail("Failed to create time logging thread");
     }
+    TAILQ_INSERT_TAIL(&threads_list, node, nodes);
+    time_logging_thread = node->thread;
 
     do_server_loop();
 
