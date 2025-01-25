@@ -29,9 +29,23 @@
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
-    /**
-    * TODO: implement per description
-    */
+    // ??? Should I use out_offs as a start point (since find_entry is, in essence, READ operation),
+    // or should I traverse across the whole buffer (then it doesn't matter where I start)?
+    size_t entry_idx = buffer->out_offs;
+    size_t off = char_offset;
+
+    do {
+        if (off < buffer->entry[entry_idx].size) { // char_offset within current entry
+            *entry_offset_byte_rtn = off;
+            return &(buffer->entry[entry_idx]);
+        } else {
+            off -= buffer->entry[entry_idx].size;
+        }
+
+        entry_idx = (entry_idx + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    } while (entry_idx != buffer->out_offs);
+
     return NULL;
 }
 
@@ -44,7 +58,8 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 */
 void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
-    // ???? Not sure it is correct, but let it be as 1st simple approach
+    // Requirements regarding moving out_offs with full buffer are vague (or maybe I simply don't understand them),
+    // but as long as unit test passes, I'm ok to consider my implementation "maybe not 100% correct, but good enough".
     if (buffer->full) {
         buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
     }
