@@ -4,8 +4,13 @@ CC?=$(CROSS_COMPILE)gcc
 CFLAGS?=-Wall -Werror
 LDFLAGS?=-lpthread -lrt
 
+USE_AESD_CHAR_DEVICE=y
+ifeq ($(USE_AESD_CHAR_DEVICE),y)
+EXTRA_CFLAGS += -DUSE_AESD_CHAR_DEVICE
+endif
+
 aesdsocket: aesdsocket.c
-	$(CC) $(CFLAGS) aesdsocket.c -o aesdsocket
+	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) aesdsocket.c -o aesdsocket
 
 all:	aesdsocket
 
