@@ -21,17 +21,22 @@
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Oleksii Khovan (aka Alexey Hovan)");
 MODULE_LICENSE("Dual BSD/GPL");
 
-struct aesd_dev aesd_device;
+static struct aesd_dev aesd_device;
+static struct aesd_circular_buffer circular_buffer;
+static size_t commands_count = 0;
+static struct aesd_buffer_entry * command = NULL;
+static struct aesd_buffer_entry * commands[AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED];
+
+#pragma GCC diagnostic ignored "-Wmissing-prototypes"
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
     PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
+    struct aesd_dev * const dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+    filp->private_data = dev;
     return 0;
 }
 
@@ -49,9 +54,43 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 {
     ssize_t retval = 0;
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
+
+    if (mutex_lock_interruptible(&aesd_device.lock) != 0) {
+        return -ERESTARTSYS;
+    }
+
+    // TBD: think of kmalloc under mutex. Is it a good idea?...
+    size_t * byte_rtn = kmalloc(sizeof(size_t), GFP_KERNEL);
+    if (byte_rtn == NULL) {
+        printk(KERN_ERR "Failed to allocate memory for byte_rtn");
+        return retval;
+    }
+
+    struct aesd_buffer_entry * command = aesd_circular_buffer_find_entry_offset_for_fpos(
+        &circular_buffer, *f_pos, byte_rtn);
+
+    if (command == NULL) {
+        goto cleanup;
+    }
+    command->size = strlen(command->buffptr);
+    count = count > command->size ? command->size : count;
+
+    if (copy_to_user(buf, command->buffptr, count) != 0) {
+        printk(KERN_ERR "Failed to copy to userspace");
+        retval = -EFAULT;
+        goto cleanup;
+    }
+
+    *f_pos += count;
+    retval = count;
+
+cleanup:
+    mutex_unlock(&aesd_device.lock);
+
+    if (byte_rtn != NULL) {
+        kfree(byte_rtn);
+    }
+
     return retval;
 }
 
@@ -59,10 +98,56 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
+    static int command_offset = 0;
+
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle write
-     */
+
+    if (command_offset == 0) {
+        command = kmalloc(sizeof(struct aesd_buffer_entry), GFP_KERNEL);
+        if (command == NULL) {
+            printk(KERN_ERR "Failed to allocate memory for circular buffer entry");
+            return retval;
+        }
+
+        command->buffptr = kmalloc(count, GFP_KERNEL);
+        if (!command->buffptr) {
+            printk(KERN_ERR "Failed to allocate memory for buffer");
+            kfree(command);
+            command = NULL;
+            return retval;
+        }
+
+        commands[commands_count++] = command;
+        if (commands_count == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+            commands_count = 0;
+        }
+    }
+
+    if (mutex_lock_interruptible(&aesd_device.lock)) {
+		return -ERESTARTSYS;
+    }
+
+    // Discard buffptr's constness explicitly
+    char * command_buffer = (char *) command->buffptr;
+    if (copy_from_user(command_buffer + command_offset, buf, count) != 0) {
+        printk(KERN_ERR "Failed to copy from userspace");
+        retval = -EFAULT;
+        goto cleanup;
+    }
+    command_offset += count;
+
+    if (*(command->buffptr + command_offset - 1) == '\n') {
+        *(command_buffer + command_offset) = '\0';
+        command->size = command_offset;
+        command_offset = 0;
+        aesd_circular_buffer_add_entry(&circular_buffer, command);
+    }
+
+    retval = count;
+
+cleanup:
+    mutex_unlock(&aesd_device.lock);
+
     return retval;
 }
 struct file_operations aesd_fops = {
@@ -100,11 +185,20 @@ int aesd_init_module(void)
         printk(KERN_WARNING "Can't get major %d\n", aesd_major);
         return result;
     }
-    memset(&aesd_device,0,sizeof(struct aesd_dev));
 
-    /**
-     * TODO: initialize the AESD specific portion of the device
-     */
+    //NB: it is not libc's memset, but wrapper around kernel intrinsic __memset()
+    memset(&aesd_device, 0, sizeof(struct aesd_dev));
+
+    aesd_circular_buffer_init(&circular_buffer);
+    mutex_init(&aesd_device.lock);
+
+    commands_count = 0;
+    // Initialize all array members in order to properly clean them up
+    // in case there were less than AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED
+    // commands during session.
+    for (size_t i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i) {
+        commands[i] = NULL;
+    }
 
     result = aesd_setup_cdev(&aesd_device);
 
@@ -121,9 +215,14 @@ void aesd_cleanup_module(void)
 
     cdev_del(&aesd_device.cdev);
 
-    /**
-     * TODO: cleanup AESD specific poritions here as necessary
-     */
+    for (size_t i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++i) {
+        if (commands[i] != NULL) {
+            if (commands[i]->buffptr != NULL) {
+                kfree(commands[i]->buffptr);
+            }
+            kfree(commands[i]);
+        }
+    }
 
     unregister_chrdev_region(devno, 1);
 }

@@ -17,8 +17,15 @@ static const char * const SERVER_ADDR = "127.0.0.1";
 static const int SERVER_PORT = 9000;
 static const int BACKLOG = 10;
 static const ssize_t READ_CHUNK_SIZE = 1024;
-static const char * const DUMP_DATA_FILE = "/var/tmp/aesdsocketdata";
-static const int TIME_LOGGING_PERIOD_SEC = 10;
+
+#ifndef USE_AESD_CHAR_DEVICE
+  static const char * const DUMP_DATA_FILE = "/var/tmp/aesdsocketdata";
+  static const int TIME_LOGGING_PERIOD_SEC = 10;
+#else
+  // driver mode - use device and don't perform timestamp logging
+  static const char * const DUMP_DATA_FILE = "/dev/aesdchar";
+#endif
+
 
 // very bad idea to keep such things in global variables, but we need to close them in signal handler 
 static bool do_run = true;
@@ -265,6 +272,7 @@ void start_daemon(void)
     close(STDERR_FILENO);
 }
 
+#ifndef USE_AESD_CHAR_DEVICE
 void * do_time_logging(void *)
 {
     // This is a special function running in separate thread, so if error occurs, we must exit the process,
@@ -306,7 +314,7 @@ void * do_time_logging(void *)
 
     return NULL;
 }
-
+#endif // USE_AESD_CHAR_DEVICE
 
 int main(int argc, char ** argv)
 {
@@ -348,10 +356,12 @@ int main(int argc, char ** argv)
         exit_fail("Failed to allocate memory for timer thread node");
 	}
 
+    #ifndef USE_AESD_CHAR_DEVICE
     if (pthread_create(&node->thread, NULL, do_time_logging, NULL) != 0) {
         exit_fail("Failed to create time logging thread");
     }
     TAILQ_INSERT_TAIL(&threads_list, node, nodes);
+    #endif // USE_AESD_CHAR_DEVICE
 
     do_server_loop();
 
