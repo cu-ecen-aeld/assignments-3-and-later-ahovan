@@ -18,6 +18,7 @@
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
 #include "aesdchar.h"
+#include "aesd_ioctl.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
@@ -141,6 +142,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         command->size = command_offset;
         command_offset = 0;
         aesd_circular_buffer_add_entry(&circular_buffer, command);
+        f_pos += command->size; // ??? tentative
     }
 
     retval = count;
@@ -150,12 +152,81 @@ cleanup:
 
     return retval;
 }
+
+loff_t aesd_llseek(struct file * filp, loff_t off, int whence)
+{
+    struct aesd_dev * const dev = filp->private_data;
+
+    if (mutex_lock_interruptible(&dev->lock)) {
+        printk(KERN_WARNING "Interrupted waiting on mutex lock");
+        return -EINTR;
+    }    
+
+    loff_t size = 0;    
+    for (ssize_t i = 0; i < commands_count/*AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED */; ++i) {
+        size += commands[i]->size;
+    }
+
+    mutex_unlock(&dev->lock);
+	return fixed_size_llseek(filp, off, whence, size);
+}
+
+static long aesd_adjust_file_offset(struct file * filp, unsigned int write_cmd, unsigned int write_cmd_offset)
+{
+    struct aesd_dev * dev = filp->private_data;
+    unsigned int written_len = 0;
+    if (mutex_lock_interruptible(&dev->lock)) {
+        printk(KERN_WARNING "aesd_adjust_file_offset: Interrupted waiting on mutex lock");
+        return -ERESTARTSYS;
+    }
+
+    if (write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED/*10*/) {
+        mutex_unlock(&dev->lock);
+        printk(KERN_WARNING "aesd_adjust_file_offset: write_cmd >= 10");
+        return -EINVAL;
+    }
+
+    if (commands[write_cmd]->size == 0 || commands[write_cmd]->size < write_cmd_offset) {
+        mutex_unlock(&dev->lock);
+        printk(KERN_WARNING "aesd_adjust_file_offset: wrong write_cmd->size");
+        return -EINVAL;
+    }
+
+    if (write_cmd < circular_buffer.out_offs) {
+        write_cmd += AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    }
+
+    for (ssize_t i = write_cmd; i > circular_buffer.out_offs; --i) {
+        const int cmd_len = commands[i % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED]->size;
+        written_len += cmd_len;
+    }
+
+    filp->f_pos = written_len + write_cmd_offset;
+    mutex_unlock(&dev->lock);
+    return 0;
+}
+
+long int aesd_ioctl(struct file * filp, unsigned int cmd, unsigned long arg)
+{
+    if (cmd != AESDCHAR_IOCSEEKTO) {
+        return -EINVAL;
+    }
+
+    struct aesd_seekto seekto;
+    if (copy_from_user(&seekto, (const void __user *) arg, sizeof(seekto)) != 0) {
+        return -EFAULT;
+    } else {
+        return aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
+    }
+}
+
 struct file_operations aesd_fops = {
-    .owner =    THIS_MODULE,
-    .read =     aesd_read,
-    .write =    aesd_write,
-    .open =     aesd_open,
-    .release =  aesd_release,
+    .owner   = THIS_MODULE,
+    .read    = aesd_read,
+    .write   = aesd_write,
+    .open    = aesd_open,
+    .release = aesd_release,
+    .llseek  = aesd_llseek,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)

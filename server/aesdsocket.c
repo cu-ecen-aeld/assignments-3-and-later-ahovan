@@ -8,24 +8,29 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <sys/ioctl.h>
 #include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/queue.h>
 #include <unistd.h>
+
+#ifdef USE_AESD_CHAR_DEVICE
+  #include "../aesd-char-driver/aesd_ioctl.h"
+#endif
 
 static const char * const SERVER_ADDR = "127.0.0.1";
 static const int SERVER_PORT = 9000;
 static const int BACKLOG = 10;
 static const ssize_t READ_CHUNK_SIZE = 1024;
 
-#ifndef USE_AESD_CHAR_DEVICE
-  static const char * const DUMP_DATA_FILE = "/var/tmp/aesdsocketdata";
-  static const int TIME_LOGGING_PERIOD_SEC = 10;
-#else
+#ifdef USE_AESD_CHAR_DEVICE
   // driver mode - use device and don't perform timestamp logging
   static const char * const DUMP_DATA_FILE = "/dev/aesdchar";
+  static const char * const IOCTL_SEEK = "AESDCHAR_IOCSEEKTO";
+#else
+  static const char * const DUMP_DATA_FILE = "/var/tmp/aesdsocketdata";
+  static const int TIME_LOGGING_PERIOD_SEC = 10;
 #endif
-
 
 // very bad idea to keep such things in global variables, but we need to close them in signal handler 
 static bool do_run = true;
@@ -146,11 +151,37 @@ void * process_client_connection(void * arg)
         }
     }
 
-    // prevent changes in file between lseek() and write() that may come from other threads 
-    pthread_mutex_lock(&dump_file_mutex);
-    off_t file_size = lseek(dump_fd, 0, SEEK_END);
-    const ssize_t written_bytes = write(dump_fd, buffer, buffer_size);
-    pthread_mutex_unlock(&dump_file_mutex);
+    ssize_t written_bytes = 0;
+    off_t file_size = 0;
+    #ifndef USE_AESD_CHAR_DEVICE
+        // prevent changes in file between lseek() and write() that may come from other threads
+        pthread_mutex_lock(&dump_file_mutex);
+        file_size = lseek(dump_fd, 0, SEEK_END);
+        written_bytes = write(dump_fd, buffer, buffer_size);
+        pthread_mutex_unlock(&dump_file_mutex);
+    #else
+        const int ioctl_seek = strncmp(buffer, IOCTL_SEEK, strlen(IOCTL_SEEK));
+        if (ioctl_seek != 0) {
+            pthread_mutex_lock(&dump_file_mutex);
+            file_size = lseek(dump_fd, 0, SEEK_END);
+            written_bytes = write(dump_fd, buffer, buffer_size);
+            pthread_mutex_unlock(&dump_file_mutex);
+        } else {
+            if (strtok(buffer, ":,")) {
+                struct aesd_seekto seek_to;
+                char * token = strtok(NULL,":,");
+                if (token) {
+                    seek_to.write_cmd = atoi(token);
+                }
+
+                token = strtok(NULL,":,");
+                if (token) {
+                    seek_to.write_cmd_offset = atoi(token);
+                }
+                written_bytes = ioctl(dump_fd, AESDCHAR_IOCSEEKTO, &seek_to);
+            }
+        }
+    #endif //USE_AESD_CHAR_DEVICE
     
     if (written_bytes != buffer_size) {
         thread_fail("Failed to write to dump data file");
